@@ -1,0 +1,32 @@
+{
+  "name": "@luckypool/draw-engine",
+  "version": "1.0.0",
+  "description": "DrawEngine SDK — provably fair on-chain draws on Stellar",
+  "main": "dist/index.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "draw",
+    "raffle",
+    "vrf",
+    "web3",
+    "luckypool"
+  ],
+  "author": "LuckyPool",
+  "license": "MIT",
+  "peerDependencies": {
+    "@stellar/stellar-sdk": ">=11.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
