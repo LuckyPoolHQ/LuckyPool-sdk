@@ -1,4 +1,4 @@
-import type { DrawEngineConfig, Entrant, DrawResult } from "./types";
+import type { DrawEngineConfig, Entrant, DrawResult } from "../types";
 import {
   Address,
   Contract,
