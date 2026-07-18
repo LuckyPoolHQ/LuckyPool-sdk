@@ -90,4 +90,11 @@ npm run build
 
 Real Soroban RPC wiring (build → simulate → sign → submit → poll), unit-tested
 against a mocked `rpc.Server`. Not yet published as a standalone npm package —
-see `docs/plan.md` Phase 3 for the extraction plan.
+see [LuckyPool-docs/plan.md](https://github.com/LuckyPoolHQ/LuckyPool-docs/blob/main/plan.md)
+Phase 3 for the extraction plan.
+
+## Related repos
+
+- [LuckyPool-contracts](https://github.com/LuckyPoolHQ/LuckyPool-contracts) — Soroban smart contracts
+- [LuckyPool-frontend](https://github.com/LuckyPoolHQ/LuckyPool-frontend) — Next.js app
+- [LuckyPool-docs](https://github.com/LuckyPoolHQ/LuckyPool-docs) — architecture, design docs
