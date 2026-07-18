@@ -1,8 +1,9 @@
 # @luckypool/draw-engine
 
-Typed TypeScript client for driving provably-fair, VRF-backed on-chain draws on Stellar/Soroban. Built for [LuckyPool](https://github.com/LuckyPoolHQ), but designed to front any Soroban contract exposing an `add_entrants` / `draw` shape — not LuckyPool-specific.
-
----
+DrawEngine SDK — a thin client for triggering and reading verifiable, VRF-backed
+on-chain draws on any Soroban contract that exposes an `add_entrants` /
+`draw` shape. Built for LuckyPool's own contract, but the method names are
+overridable so any protocol running a similar draw primitive can reuse it.
 
 ## Install
 
@@ -10,33 +11,37 @@ Typed TypeScript client for driving provably-fair, VRF-backed on-chain draws on 
 npm install @luckypool/draw-engine @stellar/stellar-sdk
 ```
 
-`@stellar/stellar-sdk` (`>=11.0.0`) is a peer dependency — bring your own version.
+`@stellar/stellar-sdk` is a peer dependency (`>=11.0.0`) — bring your own version.
 
----
-
-## Quick start
+## Usage
 
 ```ts
 import { DrawEngine } from "@luckypool/draw-engine";
 
 const engine = new DrawEngine({
-  network: "testnet",           // "testnet" | "mainnet"
-  contractId: "CA...",          // deployed contract address
-  signer,                       // any StellarSigner — Freighter, xBull, a keypair, etc.
+  network: "testnet", // or "mainnet"
+  contractId: "C...",  // your deployed contract ID
+  signer: {
+    // Any wallet that can produce an address and sign a Soroban tx XDR.
+    // Freighter's @stellar/freighter-api implements this shape directly.
+    getAddress: () => window.freighter.getAddress(),
+    signTransaction: (xdr, opts) => window.freighter.signTransaction(xdr, opts),
+  },
 });
 
+// Register participants ahead of a draw.
 await engine.addEntrants([
-  { address: "GABC...", tickets: 100 },
-  { address: "GDEF...", tickets: 25 },
+  { address: "GABC...", tickets: 3 },
+  { address: "GXYZ...", tickets: 1 },
 ]);
 
+// Trigger the draw and get the winner + VRF proof back.
 const result = await engine.draw();
-console.log(result.winner, result.vrfProof, result.txHash);
+console.log(result.winner, result.vrfProof, result.entrants);
+
+// Or look up a past draw by transaction hash.
+const past = await engine.getResult(result.txHash);
 ```
-
-See [`examples/basic-usage.ts`](examples/basic-usage.ts) for a full runnable example.
-
----
 
 ## API
 
@@ -44,90 +49,45 @@ See [`examples/basic-usage.ts`](examples/basic-usage.ts) for a full runnable exa
 
 | Field | Type | Description |
 |---|---|---|
-| `network` | `"mainnet" \| "testnet"` | Selects the Soroban RPC endpoint and network passphrase |
-| `contractId` | `string` | Address of the deployed contract |
-| `signer` | `StellarSigner` | Anything implementing `getAddress()` and `signTransaction()` |
-| `methodNames?` | `Partial<{ addEntrants, draw }>` | Override contract method names if your contract doesn't use the defaults (`add_entrants`, `draw`) |
+| `network` | `"mainnet" \| "testnet"` | Selects the Soroban RPC endpoint |
+| `contractId` | `string` | Deployed contract address (`C...`) |
+| `signer` | `StellarSigner` | `{ getAddress(), signTransaction(xdr, opts?) }` — any wallet matching this shape works |
+| `methodNames?` | `{ addEntrants?: string; draw?: string }` | Override contract method names if your contract doesn't use `add_entrants`/`draw` |
 
 ### `engine.addEntrants(entrants: Entrant[]): Promise<void>`
 
-Registers participants for the next draw. Each `Entrant` is `{ address: string, tickets: number }` — ticket count determines win probability (`P(win) = entrant_tickets / total_tickets`).
+Registers `{ address, tickets }` pairs for the next draw. No-op (no RPC calls) for an empty array.
 
 ### `engine.draw(): Promise<DrawResult>`
 
-Submits the draw transaction, polls for confirmation, and parses the result. Throws if the transaction fails on-chain or times out (20 poll attempts at 1.5s intervals).
+Submits the draw transaction, waits for on-chain confirmation, and returns the parsed result.
 
 ### `engine.getResult(txHash: string): Promise<DrawResult>`
 
-Looks up a past draw by transaction hash and parses it into a `DrawResult`. Throws if the transaction wasn't a successful draw.
+Fetches and parses a previously confirmed draw by transaction hash. Throws if the transaction wasn't a successful invocation.
 
-### `engine.rpcUrl: string`
-
-The Soroban RPC endpoint currently in use for this instance's network.
-
-### Types
+### `DrawResult`
 
 ```ts
-type Network = "mainnet" | "testnet";
-
-interface Entrant {
-  address: string;
-  tickets: number;
-}
-
 interface DrawResult {
-  winner: string;
-  vrfProof: string;
+  winner: string;     // winning address
+  vrfProof: string;   // hex-encoded VRF proof
   txHash: string;
   timestamp: number;
   entrants: number;
 }
-
-interface StellarSigner {
-  getAddress(): Promise<string>;
-  signTransaction(xdr: string, opts?: { networkPassphrase?: string }): Promise<string>;
-}
 ```
-
----
-
-## Project layout
-
-```
-src/
-├── index.ts          Public exports
-├── client/
-│   └── DrawEngine.ts Contract invocation, polling, result parsing
-└── types/
-    └── index.ts       Config, Entrant, DrawResult, StellarSigner
-examples/
-└── basic-usage.ts     End-to-end usage example
-```
-
----
 
 ## Development
 
 ```bash
 npm install
-npm run build   # tsc → dist/
-npm run dev     # tsc --watch
+npm test    # vitest — mocks the Soroban RPC layer, no network access needed
+npm run build
 ```
 
-No test suite yet — contributions welcome.
+## Status
 
----
-
-## Related repos
-
-| Repo | What's in it |
-|---|---|
-| [LuckyPool-contracts](https://github.com/LuckyPoolHQ/LuckyPool-contracts) | The Soroban contract this SDK talks to |
-| [LuckyPool-docs](https://github.com/LuckyPoolHQ/LuckyPool-docs) | Architecture, randomness design, contract interface |
-| [LuckyPool-frontend](https://github.com/LuckyPoolHQ/LuckyPool-frontend) | Reference frontend integration |
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+Real Soroban RPC wiring (build → simulate → sign → submit → poll), unit-tested
+against a mocked `rpc.Server`. Not yet published as a standalone npm package —
+see `docs/plan.md` Phase 3 for the extraction plan.
