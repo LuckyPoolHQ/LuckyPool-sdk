@@ -1,9 +1,12 @@
 # @luckypool/draw-engine
 
-DrawEngine SDK — a thin client for triggering and reading verifiable, VRF-backed
-on-chain draws on any Soroban contract that exposes an `add_entrants` /
-`draw` shape. Built for LuckyPool's own contract, but the method names are
-overridable so any protocol running a similar draw primitive can reuse it.
+A TypeScript client for the deployed **LuckyPool** Soroban contract (see
+[LuckyPool-contracts](https://github.com/LuckyPoolHQ/LuckyPool-contracts)).
+Every method here maps 1:1 to a real `#[contractimpl]` function on that
+contract — same name (in `snake_case` on the wire), same auth requirements,
+same argument and return shapes. This is the client
+[LuckyPool-frontend](https://github.com/LuckyPoolHQ/LuckyPool-frontend)
+actually uses in production; it isn't a separate, speculative abstraction.
 
 ## Install
 
@@ -16,11 +19,11 @@ npm install @luckypool/draw-engine @stellar/stellar-sdk
 ## Usage
 
 ```ts
-import { DrawEngine } from "@luckypool/draw-engine";
+import { LuckyPoolClient, usdcToStroops, stroopsToUsdc } from "@luckypool/draw-engine";
 
-const engine = new DrawEngine({
+const client = new LuckyPoolClient({
   network: "testnet", // or "mainnet"
-  contractId: "C...",  // your deployed contract ID
+  contractId: "C...",  // deployed LuckyPool contract ID
   signer: {
     // Any wallet that can produce an address and sign a Soroban tx XDR.
     // Freighter's @stellar/freighter-api implements this shape directly.
@@ -29,54 +32,83 @@ const engine = new DrawEngine({
   },
 });
 
-// Register participants ahead of a draw.
-await engine.addEntrants([
-  { address: "GABC...", tickets: 3 },
-  { address: "GXYZ...", tickets: 1 },
-]);
+// Deposit — grants 1 lottery ticket per USDC.
+await client.deposit(myAddress, 100);
 
-// Trigger the draw and get the winner + VRF proof back.
-const result = await engine.draw();
-console.log(result.winner, result.vrfProof, result.entrants);
+// Principal is always withdrawable.
+await client.withdraw(myAddress, 25);
 
-// Or look up a past draw by transaction hash.
-const past = await engine.getResult(result.txHash);
+// Read live state.
+const state = await client.getPoolState();
+const position = await client.getPosition(myAddress);
+console.log(stroopsToUsdc(state.prizePool), position.tickets);
+
+// Draw lifecycle (permissionless open, admin-gated execute — see below).
+await client.requestDraw();
+await client.executeDraw(vrfOutputHex, vrfProofHex);
+
+// Past round + user history.
+const rounds = await client.getRecentRounds(5);
+const history = await client.getUserHistory(myAddress);
 ```
 
 ## API
 
-### `new DrawEngine(config)`
+### `new LuckyPoolClient(config)`
 
 | Field | Type | Description |
 |---|---|---|
-| `network` | `"mainnet" \| "testnet"` | Selects the Soroban RPC endpoint |
-| `contractId` | `string` | Deployed contract address (`C...`) |
-| `signer` | `StellarSigner` | `{ getAddress(), signTransaction(xdr, opts?) }` — any wallet matching this shape works |
-| `methodNames?` | `{ addEntrants?: string; draw?: string }` | Override contract method names if your contract doesn't use `add_entrants`/`draw` |
+| `network` | `"mainnet" \| "testnet"` | Selects the default Soroban RPC endpoint |
+| `contractId` | `string` | Deployed LuckyPool contract address (`C...`) |
+| `signer` | `StellarSigner` | `{ getAddress(), signTransaction(xdr, opts?), signAuthEntry?(entryXdr, opts?) }` |
+| `rpcUrl?` | `string` | Override the default RPC endpoint for `network` |
 
-### `engine.addEntrants(entrants: Entrant[]): Promise<void>`
+`signAuthEntry` is only needed for `setAdmin` (see below); every other write only needs `signTransaction`.
 
-Registers `{ address, tickets }` pairs for the next draw. No-op (no RPC calls) for an empty array.
+### User actions
 
-### `engine.draw(): Promise<DrawResult>`
+- `deposit(user, amountUsdc)` — signed by `user`. Grants 1 ticket per USDC.
+- `withdraw(user, amountUsdc)` — signed by `user`. Principal is always withdrawable.
 
-Submits the draw transaction, waits for on-chain confirmation, and returns the parsed result.
+### Protocol actions
 
-### `engine.getResult(txHash: string): Promise<DrawResult>`
+- `harvestYield()` — permissionless. Pulls accrued yield into the prize pool.
+- `fundPrizePool(from, amountUsdc)` — signed by `from`. Sponsor top-ups / testing.
 
-Fetches and parses a previously confirmed draw by transaction hash. Throws if the transaction wasn't a successful invocation.
+### Draw lifecycle
 
-### `DrawResult`
+- `requestDraw()` — permissionless. Opens the draw for the current round, computes and emits the public round seed.
+- `executeDraw(vrfOutput, vrfProof)` — admin-gated. `vrfOutput`/`vrfProof` accept hex strings or raw bytes.
 
-```ts
-interface DrawResult {
-  winner: string;     // winning address
-  vrfProof: string;   // hex-encoded VRF proof
-  txHash: string;
-  timestamp: number;
-  entrants: number;
-}
-```
+  **VRF proof verification is not wired up yet** — no VRF provider with a
+  verifiable on-chain interface has been confirmed (see
+  [LuckyPool-docs/randomness.md](https://github.com/LuckyPoolHQ/LuckyPool-docs/blob/main/randomness.md)).
+  `vrfOutput` is effectively admin-supplied randomness today, not yet a
+  provably-fair draw. `executeDraw` stays admin-gated until that's resolved.
+
+### Admin
+
+- `initialize({ admin, usdc, blendPool, oracle, protocolFeeBps })` — one-time deploy setup, signed by `admin`.
+- `pause()` / `unpause()` — signed by the current admin.
+- `setAdmin(newAdmin, newAdminSigner)` — **the one write that needs two signatures.** The contract requires both the outgoing admin (the configured `signer`) and the incoming admin to independently authorize. Pass a second `StellarSigner` (with `signAuthEntry`) for the incoming admin. There's no browser-wallet flow for this in LuckyPool today — it's an ops action, typically run from a script holding both keys.
+
+### Views (simulated reads, no signature required)
+
+- `getPosition(user): Promise<UserPosition>` — `{ principal, tickets, roundJoined }`, `bigint` amounts.
+- `getPoolState(): Promise<PoolState>` — full contract state, including `paused`, `drawRequested`, `roundSeed` (hex).
+- `getRoundResult(round): Promise<RoundResult | null>` — `null` if that round hasn't been drawn (or doesn't exist).
+- `getRecentRounds(count): Promise<RoundResult[]>` — most recent completed rounds, skipping gaps.
+- `getUserHistory(user, opts?): Promise<LuckyPoolEvent[]>` — deposit/withdraw events for `user`, most recent first.
+
+### Helpers
+
+- `usdcToStroops(amountUsdc: number): bigint`
+- `stroopsToUsdc(stroops: bigint): number`
+- `STROOP = 10_000_000` — stroops per USDC (7 decimals).
+
+All `i128`/`u64` contract amounts are typed as `bigint` in this client, never
+`number` — USDC stroop amounts routinely exceed
+`Number.MAX_SAFE_INTEGER`-safe precision once a pool has real TVL.
 
 ## Development
 
@@ -88,9 +120,12 @@ npm run build
 
 ## Status
 
-Real Soroban RPC wiring (build → simulate → sign → submit → poll), unit-tested
-against a mocked `rpc.Server`. Not yet published as a standalone npm package —
-see [LuckyPool-docs/plan.md](https://github.com/LuckyPoolHQ/LuckyPool-docs/blob/main/plan.md)
+Real Soroban RPC wiring (build → simulate → sign → submit → poll) for every
+method on the deployed contract, unit-tested against a mocked `rpc.Server`
+— including the two-party `setAdmin` auth flow, exercised against real
+`xdr.SorobanAuthorizationEntry` objects rather than stubs. Not yet published
+as a standalone npm package — see
+[LuckyPool-docs/plan.md](https://github.com/LuckyPoolHQ/LuckyPool-docs/blob/main/plan.md)
 Phase 3 for the extraction plan.
 
 ## Related repos
