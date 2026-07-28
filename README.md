@@ -133,3 +133,4 @@ Phase 3 for the extraction plan.
 - [LuckyPool-contracts](https://github.com/LuckyPoolHQ/LuckyPool-contracts) — Soroban smart contracts
 - [LuckyPool-frontend](https://github.com/LuckyPoolHQ/LuckyPool-frontend) — Next.js app
 - [LuckyPool-docs](https://github.com/LuckyPoolHQ/LuckyPool-docs) — architecture, design docs
+
